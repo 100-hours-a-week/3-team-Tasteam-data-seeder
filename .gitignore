@@ -1,0 +1,28 @@
+# outputs
+dml_output*.sql
+dml/*.sql
+*.sql
+
+# cached / scraped data
+cache/
+uploaded/
+menus/
+*.json
+*.ndjson
+
+# env / secrets
+.env
+.env.*
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+env/
+.env/
+.python-version
+
+# os
+.DS_Store
