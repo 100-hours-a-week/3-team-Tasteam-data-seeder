@@ -213,7 +213,6 @@ class DMLWriter:
         rid: int,
         addr_id: int,
         sched_rows: List[str],
-        menu_category_rows: List[str],
         menu_rows: List[str],
         name: str,
         full_addr: str,
@@ -246,16 +245,6 @@ class DMLWriter:
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(sched_rows)
-                + ";\n\n"
-            )
-
-        if menu_category_rows:
-            self.lines.append(
-                "INSERT INTO menu_category (\n"
-                "  id, restaurant_id, name, display_order,\n"
-                "  created_at, updated_at\n"
-                ") VALUES\n"
-                + ",\n".join(menu_category_rows)
                 + ";\n\n"
             )
 
@@ -304,7 +293,6 @@ def build_dml_from_local(
     rid = start_id
     addr_id = rid + 100
     sched_id = rid + 200
-    menu_cat_id = rid + 400
     menu_id = rid + 800
 
     writer = DMLWriter(out_path)
@@ -341,7 +329,6 @@ def build_dml_from_local(
             continue
 
         sched_rows: List[str] = []
-        menu_category_rows: List[str] = []
         menu_rows: List[str] = []
 
         opening = menu.get("opening_hours") or {}
@@ -361,29 +348,9 @@ def build_dml_from_local(
 
         sections = menu.get("sections") or []
         if sections:
-            for i, sec in enumerate(sections):
-                raw_sec_name = sec.get("name") or "메뉴"
+            for sec in sections:
                 items = sec.get("items") or []
-                if is_ui_noise_text(raw_sec_name):
-                    continue
-                if should_swap_section_item(raw_sec_name, items):
-                    raw_sec_name = "메뉴"
-                sec_name = safe_str(raw_sec_name)
-                menu_category_rows.append(
-                    f"({menu_cat_id}, {rid}, '{sec_name}', {i}, now(), now())"
-                )
-                menu_cat_id += 1
-
-            cat_base = menu_cat_id - len(menu_category_rows)
-            for i, sec in enumerate(sections):
-                raw_sec_name = sec.get("name") or "메뉴"
-                items = sec.get("items") or []
-                if is_ui_noise_text(raw_sec_name):
-                    continue
-                swap = should_swap_section_item(raw_sec_name, items)
-                if swap:
-                    raw_sec_name = "메뉴"
-                cat_id = cat_base + i
+                swap = should_swap_section_item(sec.get("name") or "메뉴", items)
                 for j, item in enumerate(items):
                     raw_name = item.get("name") or ""
                     raw_desc = item.get("description") or ""
@@ -402,7 +369,7 @@ def build_dml_from_local(
                     price_val = item.get("price_value")
                     price = price_val if isinstance(price_val, int) else "NULL"
                     menu_rows.append(
-                        f"({menu_id}, {cat_id}, '{m_name}', "
+                        f"({menu_id}, NULL, '{m_name}', "
                         f"'{m_desc}', {price}, NULL, false, {j}, now(), now())"
                     )
                     menu_id += 1
@@ -411,7 +378,6 @@ def build_dml_from_local(
             rid=rid,
             addr_id=addr_id,
             sched_rows=sched_rows,
-            menu_category_rows=menu_category_rows,
             menu_rows=menu_rows,
             name=name,
             full_addr=full_addr,
@@ -578,7 +544,6 @@ def build_dml_from_api(
     rid = start_id
     addr_id = rid + 100
     sched_id = rid + 200
-    menu_cat_id = rid + 400
     menu_id = rid + 800
 
     writer = DMLWriter(out_path)
@@ -603,7 +568,6 @@ def build_dml_from_api(
             continue
 
         sched_rows: List[str] = []
-        menu_category_rows: List[str] = []
         menu_rows: List[str] = []
 
         opening = place.opening_hours or {}
@@ -623,29 +587,9 @@ def build_dml_from_api(
 
         sections = menu.get("sections") or []
         if sections:
-            for i, sec in enumerate(sections):
-                raw_sec_name = sec.get("name") or "메뉴"
+            for sec in sections:
                 items = sec.get("items") or []
-                if is_ui_noise_text(raw_sec_name):
-                    continue
-                if should_swap_section_item(raw_sec_name, items):
-                    raw_sec_name = "메뉴"
-                sec_name = safe_str(raw_sec_name)
-                menu_category_rows.append(
-                    f"({menu_cat_id}, {rid}, '{sec_name}', {i}, now(), now())"
-                )
-                menu_cat_id += 1
-
-            cat_base = menu_cat_id - len(menu_category_rows)
-            for i, sec in enumerate(sections):
-                raw_sec_name = sec.get("name") or "메뉴"
-                items = sec.get("items") or []
-                if is_ui_noise_text(raw_sec_name):
-                    continue
-                swap = should_swap_section_item(raw_sec_name, items)
-                if swap:
-                    raw_sec_name = "메뉴"
-                cat_id = cat_base + i
+                swap = should_swap_section_item(sec.get("name") or "메뉴", items)
                 for j, item in enumerate(items):
                     raw_name = item.get("name") or ""
                     raw_desc = item.get("description") or ""
@@ -664,7 +608,7 @@ def build_dml_from_api(
                     price_val = item.get("price_value")
                     price = price_val if isinstance(price_val, int) else "NULL"
                     menu_rows.append(
-                        f"({menu_id}, {cat_id}, '{m_name}', "
+                        f"({menu_id}, NULL, '{m_name}', "
                         f"'{m_desc}', {price}, NULL, false, {j}, now(), now())"
                     )
                     menu_id += 1
@@ -673,7 +617,6 @@ def build_dml_from_api(
             rid=rid,
             addr_id=addr_id,
             sched_rows=sched_rows,
-            menu_category_rows=menu_category_rows,
             menu_rows=menu_rows,
             name=safe_str(place.name),
             full_addr=safe_str(place.formatted_address or ""),
