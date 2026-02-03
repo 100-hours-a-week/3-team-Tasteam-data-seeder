@@ -134,9 +134,52 @@ def _extract_menu_structured(driver):
         data = None
 
     if not data:
+        # 카테고리 탭 없는 UI fallback: place_section.no_margin 내 메뉴 리스트
+        try:
+            data = driver.execute_script(
+                """
+                const items = Array.from(
+                  document.querySelectorAll(
+                    "div.place_section.no_margin ul li"
+                  )
+                ).map(li => ({
+                  name: li.querySelector("span[class*='PzHi']")?.textContent?.trim() || "",
+                  description: li.querySelector("div.okI98")?.textContent?.trim() || "",
+                  price: li.querySelector("div[class*='GXS1X'] em")?.textContent?.trim() || "",
+                  badge: li.querySelector("span[class*='QM_zp']")?.textContent?.trim() || ""
+                })).filter(m => m.name);
+                return items.length ? items : null;
+                """
+            )
+        except Exception:
+            data = None
+
+    if not data:
         return None
 
-    # 정규화: price_value/order_count 추가
+    # no_margin 구조(카테고리 탭 없음) 정규화
+    if isinstance(data, list) and data and isinstance(data[0], dict) and "badge" in data[0]:
+        sections_map = {}
+        for item in data:
+            name = item.get("name") or ""
+            if not name:
+                continue
+            badge = (item.get("badge") or "").strip() or "기타"
+            price = item.get("price") or ""
+            normalized = {
+                "name": name,
+                "description": item.get("description") or "",
+                "price": price,
+                "price_value": _parse_price_value(price),
+                "order_count": None,
+                "category": badge,
+                "image_url": None,
+            }
+            sections_map.setdefault(badge, []).append(normalized)
+        sections = [{"name": k, "items": v} for k, v in sections_map.items() if v]
+        return {"store_name": "", "notice": "", "sections": sections}
+
+    # 정규화: price_value/order_count 추가 (카테고리 탭 있는 UI)
     sections = []
     for sec in data:
         items = []
@@ -586,9 +629,18 @@ if __name__ == "__main__":
         filename = f"{expected_name}_menu.json"
         expected_path = os.path.join(args.out_dir, filename)
         uploaded_path = os.path.join("uploaded", filename)
-        if os.path.exists(expected_path) or os.path.exists(uploaded_path):
-            hit = expected_path if os.path.exists(expected_path) else uploaded_path
-            print(f"[{idx}/{len(targets)}] 스킵(이미 있음): {hit}")
+        cache_path = os.path.join("cache", "menus", filename)
+        if os.path.exists(expected_path) or os.path.exists(uploaded_path) or os.path.exists(cache_path):
+            if os.path.exists(cache_path):
+                hit = cache_path
+                reason = "이미 다운로드됨"
+            elif os.path.exists(expected_path):
+                hit = expected_path
+                reason = "duplicated"
+            else:
+                hit = uploaded_path
+                reason = "duplicated"
+            print(f"[{idx}/{len(targets)}] 스킵({reason}): {hit}")
             continue
         print(f"[{idx}/{len(targets)}] 검색: {query}")
         try:
