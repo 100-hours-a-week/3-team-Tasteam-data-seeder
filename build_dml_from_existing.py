@@ -5,6 +5,7 @@ uploaded/ 메뉴 JSON과 ktb_res_*.json을 매칭해서 DML을 생성한다.
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -100,6 +101,28 @@ def safe_str(s: str) -> str:
     return s.replace("'", "''")
 
 
+def stable_hash_int(*parts: object, bits: int = 48) -> int:
+    if bits <= 0 or bits > 60:
+        raise ValueError("bits must be between 1 and 60")
+    key = "|".join("" if p is None else str(p) for p in parts)
+    digest = hashlib.sha1(key.encode("utf-8")).digest()
+    val = int.from_bytes(digest[:8], "big") & ((1 << bits) - 1)
+    return val or 1
+
+
+def restaurant_id_for_place(place: dict, name: str) -> int:
+    place_id = place.get("id")
+    if place_id:
+        key = place_id
+    else:
+        addr = place.get("formattedAddress") or ""
+        loc = place.get("location") or {}
+        lat = loc.get("latitude")
+        lng = loc.get("longitude")
+        key = f"{name}|{addr}|{lat}|{lng}"
+    return stable_hash_int("restaurant", key, bits=48)
+
+
 def address_id(rid: int) -> int:
     return rid * 10 + 1
 
@@ -139,6 +162,12 @@ def main():
     parser.add_argument("--out", default="dml_output.sql", help="DML 출력 파일")
     parser.add_argument("--override-json", default=None, help="textSearch 결과 JSON")
     parser.add_argument("--start-id", type=int, default=9000, help="restaurant 시작 ID")
+    parser.add_argument(
+        "--id-mode",
+        choices=["hash", "sequential"],
+        default="hash",
+        help="restaurant ID 생성 방식 (hash 권장)",
+    )
     args = parser.parse_args()
 
     place_paths = sorted(glob.glob(args.places_glob))
@@ -154,6 +183,7 @@ def main():
     lines.append("-- auto-generated DML\n")
 
     skipped = 0
+    seen_rids: set[int] = set()
     for fname in menu_files:
         fpath = os.path.join(args.menus_dir, fname)
         with open(fpath, "r", encoding="utf-8") as f:
@@ -168,6 +198,8 @@ def main():
             skipped += 1
             continue
 
+        if args.id_mode == "hash":
+            rid = restaurant_id_for_place(place, store)
         name = safe_str(store)
         full_addr = safe_str(place.get("formattedAddress") or "")
         loc = place.get("location") or {}
@@ -176,6 +208,10 @@ def main():
         if lat is None or lng is None:
             skipped += 1
             continue
+        if rid in seen_rids:
+            skipped += 1
+            continue
+        seen_rids.add(rid)
 
         phone = safe_str(place.get("nationalPhoneNumber") or "")
         phone_val = "NULL" if not phone else f"'{phone}'"
@@ -300,7 +336,8 @@ def main():
                 + "\nON CONFLICT DO NOTHING;\n\n"
             )
 
-        rid += 1
+        if args.id_mode == "sequential":
+            rid += 1
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("".join(lines))

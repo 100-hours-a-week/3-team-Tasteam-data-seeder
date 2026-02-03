@@ -12,6 +12,7 @@ Future extensions:
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -37,6 +38,20 @@ def safe_str(s: str) -> str:
     if s is None:
         return ""
     return s.replace("'", "''")
+
+
+def stable_hash_int(*parts: object, bits: int = 48) -> int:
+    if bits <= 0 or bits > 60:
+        raise ValueError("bits must be between 1 and 60")
+    key = "|".join("" if p is None else str(p) for p in parts)
+    digest = hashlib.sha1(key.encode("utf-8")).digest()
+    val = int.from_bytes(digest[:8], "big") & ((1 << bits) - 1)
+    return val or 1
+
+
+def restaurant_id_for_place(place: "Place") -> int:
+    key = place.place_id or f"{place.name}|{place.formatted_address}|{place.lat}|{place.lng}"
+    return stable_hash_int("restaurant", key, bits=48)
 
 
 def is_ui_noise_text(s: str) -> bool:
@@ -372,6 +387,7 @@ def build_dml_from_local(
     out_path: str,
     override_json: Optional[str],
     start_id: int,
+    id_mode: str,
     lat: float,
     lng: float,
     dry_run: bool,
@@ -390,6 +406,7 @@ def build_dml_from_local(
     skipped = 0
     appended = 0
     skipped_items: List[Dict[str, Any]] = []
+    seen_rids: set[int] = set()
     total = len(menu_files)
     for idx, fname in enumerate(menu_files, 1):
         fpath = os.path.join(menus_dir, fname)
@@ -409,6 +426,8 @@ def build_dml_from_local(
             print(f"[{idx}/{total}] skipped (place_not_found) store={store}")
             continue
 
+        if id_mode == "hash":
+            rid = restaurant_id_for_place(place)
         name = safe_str(store)
         full_addr = safe_str(place.formatted_address or "")
         if place.lat is None or place.lng is None:
@@ -416,6 +435,12 @@ def build_dml_from_local(
             skipped_items.append({"reason": "missing_location", "store": store, "file": fpath})
             print(f"[{idx}/{total}] skipped (missing_location) store={store}")
             continue
+        if rid in seen_rids:
+            skipped += 1
+            skipped_items.append({"reason": "duplicated_restaurant", "store": store, "file": fpath})
+            print(f"[{idx}/{total}] skipped (duplicated_restaurant) store={store}")
+            continue
+        seen_rids.add(rid)
 
         sched_rows: List[str] = []
         override_rows: List[str] = []
@@ -515,7 +540,8 @@ def build_dml_from_local(
             lat=place.lat,
         )
 
-        rid += 1
+        if id_mode == "sequential":
+            rid += 1
         appended += 1
         print(f"[{idx}/{total}] appended store={store}")
 
@@ -654,6 +680,7 @@ def build_dml_from_api(
     cache_dir: str,
     out_path: str,
     start_id: int,
+    id_mode: str,
     use_naver: bool,
     sleep_sec: float,
     dry_run: bool,
@@ -681,8 +708,19 @@ def build_dml_from_api(
     skipped = 0
     appended = 0
     skipped_items: List[Dict[str, Any]] = []
+    seen_rids: set[int] = set()
     total = len(places)
     for idx, place in enumerate(places, 1):
+        if id_mode == "hash":
+            rid = restaurant_id_for_place(place)
+        if rid in seen_rids:
+            skipped += 1
+            skipped_items.append(
+                {"reason": "duplicated_restaurant", "place_name": place.name, "place_id": place.place_id}
+            )
+            print(f"[{idx}/{total}] skipped (duplicated_restaurant) place={place.name}")
+            continue
+        seen_rids.add(rid)
         menu = get_menu_for_place(place, cache_dir, use_naver, sleep_sec)
         if not menu:
             skipped += 1
@@ -794,7 +832,8 @@ def build_dml_from_api(
             lat=place.lat,
         )
 
-        rid += 1
+        if id_mode == "sequential":
+            rid += 1
         appended += 1
         print(f"[{idx}/{total}] appended place={place.name}")
 
@@ -821,6 +860,12 @@ def main() -> None:
     parser.add_argument("--override-json", default=None, help="override JSON (optional)")
     parser.add_argument("--out", default="dml_output.sql", help="DML output file")
     parser.add_argument("--start-id", type=int, default=9000, help="restaurant starting ID")
+    parser.add_argument(
+        "--id-mode",
+        choices=["hash", "sequential"],
+        default="hash",
+        help="restaurant ID 생성 방식 (hash 권장)",
+    )
     parser.add_argument("--cache-dir", default="cache", help="cache directory")
     parser.add_argument("--radius", type=float, default=500.0, help="radius (m)")
     parser.add_argument("--rank", default="DISTANCE", choices=["DISTANCE", "POPULARITY"], help="rank")
@@ -852,6 +897,7 @@ def main() -> None:
             out_path=args.out,
             override_json=args.override_json,
             start_id=args.start_id,
+            id_mode=args.id_mode,
             lat=args.lat,
             lng=args.lng,
             dry_run=args.dry_run,
@@ -873,6 +919,7 @@ def main() -> None:
             cache_dir=args.cache_dir,
             out_path=args.out,
             start_id=args.start_id,
+            id_mode=args.id_mode,
             use_naver=args.use_naver,
             sleep_sec=args.sleep,
             dry_run=args.dry_run,
