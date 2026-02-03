@@ -100,6 +100,22 @@ def safe_str(s: str) -> str:
     return s.replace("'", "''")
 
 
+def address_id(rid: int) -> int:
+    return rid * 10 + 1
+
+
+def weekly_id(rid: int, day: int) -> int:
+    return rid * 100 + day
+
+
+def menu_category_id(rid: int, idx: int) -> int:
+    return rid * 100 + 20 + idx
+
+
+def menu_id(rid: int, idx: int) -> int:
+    return rid * 1000 + 200 + idx
+
+
 def is_ui_noise_text(s: str) -> bool:
     if not s:
         return False
@@ -133,11 +149,6 @@ def main():
     )
 
     rid = args.start_id
-    addr_id = rid + 100
-    sched_id = rid + 200
-    menu_cat_id = rid + 400
-    menu_id = rid + 800
-    rfc_id = rid + 1000
 
     lines = []
     lines.append("-- auto-generated DML\n")
@@ -166,13 +177,15 @@ def main():
             skipped += 1
             continue
 
+        phone = safe_str(place.get("nationalPhoneNumber") or "")
+        phone_val = "NULL" if not phone else f"'{phone}'"
         restaurant_values = [
-            f"({rid}, '{name}', '{full_addr}', "
+            f"({rid}, '{name}', '{full_addr}', {phone_val}, "
             f"ST_GeomFromText('POINT({lng} {lat})', 4326), "
             "NULL, now(), now())"
         ]
         address_values = [
-            f"({addr_id}, {rid}, NULL, NULL, NULL, NULL, now(), now())"
+            f"({address_id(rid)}, {rid}, NULL, NULL, NULL, NULL, now(), now())"
         ]
         schedule_values = []
         rfc_values = []
@@ -190,22 +203,23 @@ def main():
                 o = f"'{open_time}'" if open_time else "NULL"
                 c = f"'{close_time}'" if close_time else "NULL"
                 schedule_values.append(
-                    f"({sched_id}, {rid}, {day}, {o}, {c}, "
-                    f"{'true' if is_closed else 'false'}, '2024-01-01', NULL, now(), now())"
+                    f"({weekly_id(rid, day)}, {rid}, {day}, {o}, {c}, "
+                    f"{'true' if is_closed else 'false'}, NULL, NULL, now(), now())"
                 )
-                sched_id += 1
 
         # menu_category + menu
         sections = menu.get("sections") or []
         if sections:
+            cat_idx = 1
+            menu_idx = 1
             for i, sec in enumerate(sections):
                 sec_name = safe_str(sec.get("name") or "메뉴")
                 menu_category_values.append(
-                    f"({menu_cat_id}, {rid}, '{sec_name}', {i}, now(), now())"
+                    f"({menu_category_id(rid, cat_idx)}, {rid}, '{sec_name}', {i}, now(), now())"
                 )
-                menu_cat_id += 1
+                cat_idx += 1
 
-            cat_base = menu_cat_id - len(sections)
+            cat_base = menu_category_id(rid, 1)
             for i, sec in enumerate(sections):
                 cat_id = cat_base + i
                 items = sec.get("items") or []
@@ -220,10 +234,10 @@ def main():
                     price_val = item.get("price_value")
                     price = price_val if isinstance(price_val, int) else "NULL"
                     menu_values.append(
-                        f"({menu_id}, {cat_id}, '{m_name}', "
+                        f"({menu_id(rid, menu_idx)}, {cat_id}, '{m_name}', "
                         f"'{m_desc}', {price}, NULL, false, {j}, now(), now())"
                     )
-                    menu_id += 1
+                    menu_idx += 1
 
         # restaurant_food_category (스킵: 자동 분류 미적용)
 
@@ -231,10 +245,10 @@ def main():
         if restaurant_values:
             lines.append(
                 "INSERT INTO restaurant (\n"
-                "  id, name, full_address, location, deleted_at, created_at, updated_at\n"
+                "  id, name, full_address, phone_number, location, deleted_at, created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(restaurant_values)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
         if address_values:
             lines.append(
@@ -243,7 +257,7 @@ def main():
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(address_values)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
         if schedule_values:
             lines.append(
@@ -254,7 +268,7 @@ def main():
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(schedule_values)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
         if rfc_values:
             lines.append(
@@ -263,7 +277,7 @@ def main():
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(rfc_values)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
         if menu_category_values:
             lines.append(
@@ -272,7 +286,7 @@ def main():
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(menu_category_values)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
         if menu_values:
             lines.append(
@@ -283,11 +297,10 @@ def main():
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(menu_values)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
 
         rid += 1
-        addr_id += 1
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("".join(lines))

@@ -41,7 +41,129 @@ def restart_driver():
     driver = None
     return init_driver()
 
-def menu(data): # 메뉴 크롤링
+
+def _auto_scroll_to_load(driver, step: int = 600, delay: float = 0.35, max_loops: int = 80) -> None:
+    """스크롤 기반 lazy-load 데이터를 끝까지 로딩."""
+    try:
+        scrollable = driver.execute_script(
+            """
+            const first = document.querySelector(
+              "div[class*='OrderHome__order_list_wrap'][class*='order_list_category']"
+            );
+            let el = first;
+            while (el) {
+              if (el.scrollHeight > el.clientHeight + 20) return el;
+              el = el.parentElement;
+            }
+            return document.scrollingElement || document.documentElement;
+            """
+        )
+    except Exception:
+        scrollable = None
+
+    if not scrollable:
+        return
+
+    last_height = -1
+    stable = 0
+    for _ in range(max_loops):
+        try:
+            driver.execute_script("arguments[0].scrollTop += arguments[1];", scrollable, step)
+            time.sleep(delay)
+            height = driver.execute_script("return arguments[0].scrollHeight;", scrollable)
+            at_bottom = driver.execute_script(
+                "return arguments[0].scrollTop + arguments[0].clientHeight >= arguments[0].scrollHeight - 2;",
+                scrollable,
+            )
+            if height == last_height:
+                stable += 1
+            else:
+                stable = 0
+            last_height = height
+            if at_bottom and stable >= 2:
+                break
+        except Exception:
+            break
+
+
+def _parse_price_value(price: str):
+    if not price:
+        return None
+    try:
+        return int(re.sub(r"[^\d]", "", price))
+    except ValueError:
+        return None
+
+
+def _extract_menu_structured(driver):
+    """DOM에서 카테고리/메뉴 구조를 직접 추출."""
+    try:
+        data = driver.execute_script(
+            """
+            const sections = Array.from(
+              document.querySelectorAll(
+                "div[class*='OrderHome__order_list_wrap'][class*='order_list_category']"
+              )
+            );
+            if (!sections.length) return null;
+
+            const out = sections.map(section => {
+              const category = section
+                .querySelector("div[class*='OrderHome__order_list_tit'] span[class*='OrderHome__title']")
+                ?.textContent?.trim() || "";
+
+              const menus = Array.from(
+                section.querySelectorAll("li[class*='MenuContent__order_list_item']")
+              ).map(li => ({
+                name: li.querySelector("div[class*='MenuContent__tit']")?.textContent?.trim() || "",
+                description: li.querySelector("div[class*='MenuContent__detail'] span.detail_txt")
+                  ?.textContent?.trim() || "",
+                price: li.querySelector("div[class*='MenuContent__price'] strong")?.textContent?.trim() || "",
+                order_count: li.querySelector("span[class*='MenuContent__detail_order'] em")
+                  ?.textContent?.trim() || "",
+                image_url: li.querySelector("img")?.getAttribute("src") || ""
+              })).filter(m => m.name);
+
+              return { name: category, items: menus };
+            }).filter(s => s.name && s.items.length);
+
+            return out.length ? out : null;
+            """
+        )
+    except Exception:
+        data = None
+
+    if not data:
+        return None
+
+    # 정규화: price_value/order_count 추가
+    sections = []
+    for sec in data:
+        items = []
+        for item in sec.get("items", []):
+            price = item.get("price") or ""
+            order_count_raw = item.get("order_count") or ""
+            order_count = None
+            if isinstance(order_count_raw, str) and order_count_raw.strip().isdigit():
+                order_count = int(order_count_raw.strip())
+            items.append(
+                {
+                    "name": item.get("name") or "",
+                    "description": item.get("description") or "",
+                    "price": price,
+                    "price_value": _parse_price_value(price),
+                    "order_count": order_count,
+                    "category": sec.get("name") or None,
+                    "image_url": item.get("image_url") or None,
+                }
+            )
+        if sec.get("name") and items:
+            sections.append({"name": sec.get("name"), "items": items})
+
+    return {"store_name": "", "notice": "", "sections": sections}
+
+
+def menu(data):  # 메뉴 크롤링
     init_driver()
     wait = WebDriverWait(driver, 15)
     driver.get("https://map.naver.com/v5/search/"+data) # 검색창에 가게이름 입력
@@ -84,6 +206,14 @@ def menu(data): # 메뉴 크롤링
                 break
     except Exception:
         pass
+
+    # lazy-load 대응: 스크롤로 전체 메뉴 로딩 후 DOM 구조 파싱 시도
+    _auto_scroll_to_load(driver)
+    structured = _extract_menu_structured(driver)
+    if structured and structured.get("sections"):
+        if not structured.get("store_name"):
+            structured["store_name"] = data or ""
+        return structured
 
     # 네이버 지도는 클래스명을 자주 바꿈. 여러 후보를 모아서 실제 메뉴(가격 포함)가 있는 것을 골라냄
     MENU_CLASS_CANDIDATES = ['_3ak_I', 'V1UmJ', 'place_section_content', 'K0PDV', 'E2BNj']
@@ -222,6 +352,13 @@ def parse_menu_to_json(raw_text: str) -> dict:
 
     반환: { "store_name", "notice", "sections": [ { "name", "items": [ { "name", "description", "price", "price_value", "order_count", "category" } ] } ] }
     """
+    if isinstance(raw_text, dict):
+        sections = raw_text.get("sections") or []
+        return {
+            "store_name": raw_text.get("store_name") or "",
+            "notice": raw_text.get("notice") or "",
+            "sections": sections,
+        }
     if not raw_text or not raw_text.strip():
         return {"store_name": "", "notice": "", "sections": []}
 

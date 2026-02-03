@@ -58,6 +58,8 @@ def is_ui_noise_text(s: str) -> bool:
         "문의",
         "방문자 리뷰",
         "블로그 리뷰",
+        "더보기",
+        "펼쳐서 더보기",
     )
     if any(p in s for p in ui_phrases):
         return True
@@ -105,7 +107,29 @@ class Place:
     formatted_address: str
     lat: float
     lng: float
-    opening_hours: Optional[dict]
+    regular_opening_hours: Optional[dict]
+    current_opening_hours: Optional[dict]
+    national_phone_number: Optional[str]
+
+
+def address_id(rid: int) -> int:
+    return rid * 10 + 1
+
+
+def weekly_id(rid: int, day: int) -> int:
+    return rid * 100 + day
+
+
+def override_id(rid: int, idx: int) -> int:
+    return rid * 1000 + idx
+
+
+def menu_category_id(rid: int, idx: int) -> int:
+    return rid * 100 + 20 + idx
+
+
+def menu_id(rid: int, idx: int) -> int:
+    return rid * 1000 + 200 + idx
 
 
 def load_places(paths: List[str], override_path: Optional[str] = None) -> Dict[str, Place]:
@@ -160,7 +184,9 @@ def load_places(paths: List[str], override_path: Optional[str] = None) -> Dict[s
             formatted_address=pl.get("formattedAddress") or "",
             lat=lat,
             lng=lng,
-            opening_hours=pl.get("openingHours"),
+            regular_opening_hours=pl.get("regularOpeningHours"),
+            current_opening_hours=pl.get("currentOpeningHours"),
+            national_phone_number=pl.get("nationalPhoneNumber"),
         )
         name_map[key] = place
     return name_map
@@ -194,6 +220,44 @@ def map_periods_to_weekly(periods: List[dict]) -> Dict[int, Tuple[Optional[str],
     return weekly
 
 
+def expand_current_periods(periods: List[dict]) -> Dict[str, Tuple[str, Optional[str]]]:
+    """Expand currentOpeningHours periods into date -> (open_time, close_time)."""
+    from datetime import date, timedelta
+
+    out: Dict[str, Tuple[str, Optional[str]]] = {}
+    for p in periods:
+        o = p.get("open") or {}
+        c = p.get("close") or {}
+        o_date = (o.get("date") or {})
+        c_date = (c.get("date") or {})
+        if not o_date or not c_date:
+            continue
+        try:
+            start = date(o_date.get("year"), o_date.get("month"), o_date.get("day"))
+            end = date(c_date.get("year"), c_date.get("month"), c_date.get("day"))
+        except Exception:
+            continue
+        if end < start:
+            continue
+
+        o_time = f"{o.get('hour', 0):02d}:{o.get('minute', 0):02d}"
+        c_time = f"{c.get('hour', 0):02d}:{c.get('minute', 0):02d}" if c else None
+
+        cur = start
+        while cur <= end:
+            if start == end:
+                out[cur.isoformat()] = (o_time, c_time)
+                break
+            if cur == start:
+                out[cur.isoformat()] = (o_time, "23:59")
+            elif cur == end:
+                out[cur.isoformat()] = ("00:00", c_time)
+            else:
+                out[cur.isoformat()] = ("00:00", "23:59")
+            cur += timedelta(days=1)
+    return out
+
+
 class DMLWriter:
     def __init__(self, out_path: str):
         self.out_path = out_path
@@ -213,19 +277,25 @@ class DMLWriter:
         rid: int,
         addr_id: int,
         sched_rows: List[str],
+        override_rows: List[str],
+        menu_cat_rows: List[str],
         menu_rows: List[str],
         name: str,
         full_addr: str,
+        phone_number: Optional[str],
         lng: float,
         lat: float,
     ) -> None:
+        phone_val = "NULL" if not phone_number else f"'{phone_number}'"
         self.lines.append(
             "INSERT INTO restaurant (\n"
-            "  id, name, full_address, location, deleted_at, created_at, updated_at\n"
+            "  id, name, full_address, phone_number, location, deleted_at, created_at, updated_at\n"
             ") VALUES\n"
             f"({rid}, '{name}', '{full_addr}', "
+            f"{phone_val}, "
             f"ST_GeomFromText('POINT({lng} {lat})', 4326), "
-            "NULL, now(), now());\n\n"
+            "NULL, now(), now())\n"
+            "ON CONFLICT DO NOTHING;\n\n"
         )
 
         self.lines.append(
@@ -233,7 +303,8 @@ class DMLWriter:
             "  id, restaurant_id, sido, sigungu, eupmyeondong, postal_code,\n"
             "  created_at, updated_at\n"
             ") VALUES\n"
-            f"({addr_id}, {rid}, NULL, NULL, NULL, NULL, now(), now());\n\n"
+            f"({addr_id}, {rid}, NULL, NULL, NULL, NULL, now(), now())\n"
+            "ON CONFLICT DO NOTHING;\n\n"
         )
 
         if sched_rows:
@@ -245,7 +316,28 @@ class DMLWriter:
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(sched_rows)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
+            )
+
+        if override_rows:
+            self.lines.append(
+                "INSERT INTO restaurant_schedule_override (\n"
+                "  id, restaurant_id, date,\n"
+                "  open_time, close_time, is_closed, reason,\n"
+                "  created_at, updated_at\n"
+                ") VALUES\n"
+                + ",\n".join(override_rows)
+                + "\nON CONFLICT DO NOTHING;\n\n"
+            )
+
+        if menu_cat_rows:
+            self.lines.append(
+                "INSERT INTO menu_category (\n"
+                "  id, restaurant_id, name, display_order,\n"
+                "  created_at, updated_at\n"
+                ") VALUES\n"
+                + ",\n".join(menu_cat_rows)
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
 
         if menu_rows:
@@ -257,7 +349,7 @@ class DMLWriter:
                 "  created_at, updated_at\n"
                 ") VALUES\n"
                 + ",\n".join(menu_rows)
-                + ";\n\n"
+                + "\nON CONFLICT DO NOTHING;\n\n"
             )
 
     def write(self, dry_run: bool = False) -> None:
@@ -288,12 +380,9 @@ def build_dml_from_local(
     place_paths = sorted(glob.glob(places_glob))
     name_map = load_places(place_paths, override_json)
 
-    menu_files = sorted(f for f in os.listdir(menus_dir) if f.endswith("_menu.json"))
+    menu_files = sorted(f for f in os.listdir(menus_dir) if f.endswith(".json"))
 
     rid = start_id
-    addr_id = rid + 100
-    sched_id = rid + 200
-    menu_id = rid + 800
 
     writer = DMLWriter(out_path)
     writer.append_header(lat, lng, radius=None, rank="LOCAL")
@@ -329,11 +418,13 @@ def build_dml_from_local(
             continue
 
         sched_rows: List[str] = []
+        override_rows: List[str] = []
+        menu_cat_rows: List[str] = []
         menu_rows: List[str] = []
 
-        opening = menu.get("opening_hours") or {}
-        regular = opening.get("regularOpeningHours") or {}
+        regular = place.regular_opening_hours or {}
         periods = regular.get("periods") or []
+        weekly: Dict[int, Tuple[Optional[str], Optional[str], bool]] = {}
         if periods:
             weekly = map_periods_to_weekly(periods)
             for day in range(1, 8):
@@ -341,16 +432,45 @@ def build_dml_from_local(
                 o = f"'{open_time}'" if open_time else "NULL"
                 c = f"'{close_time}'" if close_time else "NULL"
                 sched_rows.append(
-                    f"({sched_id}, {rid}, {day}, {o}, {c}, "
-                    f"{'true' if is_closed else 'false'}, '2024-01-01', NULL, now(), now())"
+                    f"({weekly_id(rid, day)}, {rid}, {day}, {o}, {c}, "
+                    f"{'true' if is_closed else 'false'}, NULL, NULL, now(), now())"
                 )
-                sched_id += 1
+
+            current = place.current_opening_hours or {}
+            current_periods = current.get("periods") or []
+            if current_periods:
+                expanded = expand_current_periods(current_periods)
+                override_idx = 1
+                for date_str, (o_time, c_time) in expanded.items():
+                    try:
+                        from datetime import date as _date
+                        dt = _date.fromisoformat(date_str)
+                    except Exception:
+                        continue
+                    day = dt.weekday() + 1
+                    w_open, w_close, w_closed = weekly.get(day, (None, None, True))
+                    same_open = (w_open == o_time)
+                    same_close = (w_close == c_time)
+                    same_closed = (w_closed is False)
+                    if same_open and same_close and same_closed:
+                        continue
+                    cval = f"'{c_time}'" if c_time else "NULL"
+                    override_rows.append(
+                        f"({override_id(rid, override_idx)}, {rid}, '{date_str}', "
+                        f"'{o_time}', {cval}, false, NULL, now(), now())"
+                    )
+                    override_idx += 1
 
         sections = menu.get("sections") or []
         if sections:
+            cat_order = 0
+            cat_idx = 1
+            menu_idx = 1
             for sec in sections:
+                sec_name = safe_str(sec.get("name") or "메뉴")
                 items = sec.get("items") or []
                 swap = should_swap_section_item(sec.get("name") or "메뉴", items)
+                cat_items: List[str] = []
                 for j, item in enumerate(items):
                     raw_name = item.get("name") or ""
                     raw_desc = item.get("description") or ""
@@ -368,25 +488,34 @@ def build_dml_from_local(
                     m_desc = safe_str(raw_desc)
                     price_val = item.get("price_value")
                     price = price_val if isinstance(price_val, int) else "NULL"
-                    menu_rows.append(
-                        f"({menu_id}, NULL, '{m_name}', "
+                    cat_items.append(
+                        f"({menu_id(rid, menu_idx)}, {menu_category_id(rid, cat_idx)}, '{m_name}', "
                         f"'{m_desc}', {price}, NULL, false, {j}, now(), now())"
                     )
-                    menu_id += 1
+                    menu_idx += 1
+                if cat_items:
+                    menu_cat_rows.append(
+                        f"({menu_category_id(rid, cat_idx)}, {rid}, '{sec_name}', {cat_order}, now(), now())"
+                    )
+                    cat_order += 1
+                    menu_rows.extend(cat_items)
+                    cat_idx += 1
 
         writer.append_restaurant_block(
             rid=rid,
-            addr_id=addr_id,
+            addr_id=address_id(rid),
             sched_rows=sched_rows,
+            override_rows=override_rows,
+            menu_cat_rows=menu_cat_rows,
             menu_rows=menu_rows,
             name=name,
             full_addr=full_addr,
+            phone_number=safe_str(place.national_phone_number or ""),
             lng=place.lng,
             lat=place.lat,
         )
 
         rid += 1
-        addr_id += 1
         appended += 1
         print(f"[{idx}/{total}] appended store={store}")
 
@@ -439,6 +568,7 @@ def fetch_places_nearby(
         "places.displayName,places.id,places.formattedAddress,places.location,"
         "places.primaryType,places.types,places.googleMapsUri,places.businessStatus,"
         "places.shortFormattedAddress,places.plusCode,places.viewport,places.photos,"
+        "places.nationalPhoneNumber,"
         "places.currentOpeningHours,places.currentSecondaryOpeningHours,"
         "places.regularOpeningHours,places.regularSecondaryOpeningHours"
     )
@@ -472,7 +602,9 @@ def places_from_response(data: dict) -> List[Place]:
                 formatted_address=pl.get("formattedAddress") or "",
                 lat=lat,
                 lng=lng,
-                opening_hours=pl.get("openingHours"),
+                regular_opening_hours=pl.get("regularOpeningHours"),
+                current_opening_hours=pl.get("currentOpeningHours"),
+                national_phone_number=pl.get("nationalPhoneNumber"),
             )
         )
     return out
@@ -542,9 +674,6 @@ def build_dml_from_api(
     places = places_from_response(data)
 
     rid = start_id
-    addr_id = rid + 100
-    sched_id = rid + 200
-    menu_id = rid + 800
 
     writer = DMLWriter(out_path)
     writer.append_header(lat, lng, radius=radius, rank=rank)
@@ -568,11 +697,13 @@ def build_dml_from_api(
             continue
 
         sched_rows: List[str] = []
+        override_rows: List[str] = []
+        menu_cat_rows: List[str] = []
         menu_rows: List[str] = []
 
-        opening = place.opening_hours or {}
-        regular = (opening or {}).get("regularOpeningHours") or {}
+        regular = place.regular_opening_hours or {}
         periods = regular.get("periods") or []
+        weekly: Dict[int, Tuple[Optional[str], Optional[str], bool]] = {}
         if periods:
             weekly = map_periods_to_weekly(periods)
             for day in range(1, 8):
@@ -580,16 +711,45 @@ def build_dml_from_api(
                 o = f"'{open_time}'" if open_time else "NULL"
                 c = f"'{close_time}'" if close_time else "NULL"
                 sched_rows.append(
-                    f"({sched_id}, {rid}, {day}, {o}, {c}, "
-                    f"{'true' if is_closed else 'false'}, '2024-01-01', NULL, now(), now())"
+                    f"({weekly_id(rid, day)}, {rid}, {day}, {o}, {c}, "
+                    f"{'true' if is_closed else 'false'}, NULL, NULL, now(), now())"
                 )
-                sched_id += 1
+
+        current = place.current_opening_hours or {}
+        current_periods = current.get("periods") or []
+        if current_periods and weekly:
+            expanded = expand_current_periods(current_periods)
+            override_idx = 1
+            for date_str, (o_time, c_time) in expanded.items():
+                try:
+                    from datetime import date as _date
+                    dt = _date.fromisoformat(date_str)
+                except Exception:
+                    continue
+                day = dt.weekday() + 1
+                w_open, w_close, w_closed = weekly.get(day, (None, None, True))
+                same_open = (w_open == o_time)
+                same_close = (w_close == c_time)
+                same_closed = (w_closed is False)
+                if same_open and same_close and same_closed:
+                    continue
+                cval = f"'{c_time}'" if c_time else "NULL"
+                override_rows.append(
+                    f"({override_id(rid, override_idx)}, {rid}, '{date_str}', "
+                    f"'{o_time}', {cval}, false, NULL, now(), now())"
+                )
+                override_idx += 1
 
         sections = menu.get("sections") or []
         if sections:
+            cat_order = 0
+            cat_idx = 1
+            menu_idx = 1
             for sec in sections:
+                sec_name = safe_str(sec.get("name") or "메뉴")
                 items = sec.get("items") or []
                 swap = should_swap_section_item(sec.get("name") or "메뉴", items)
+                cat_items: List[str] = []
                 for j, item in enumerate(items):
                     raw_name = item.get("name") or ""
                     raw_desc = item.get("description") or ""
@@ -607,25 +767,34 @@ def build_dml_from_api(
                     m_desc = safe_str(raw_desc)
                     price_val = item.get("price_value")
                     price = price_val if isinstance(price_val, int) else "NULL"
-                    menu_rows.append(
-                        f"({menu_id}, NULL, '{m_name}', "
+                    cat_items.append(
+                        f"({menu_id(rid, menu_idx)}, {menu_category_id(rid, cat_idx)}, '{m_name}', "
                         f"'{m_desc}', {price}, NULL, false, {j}, now(), now())"
                     )
-                    menu_id += 1
+                    menu_idx += 1
+                if cat_items:
+                    menu_cat_rows.append(
+                        f"({menu_category_id(rid, cat_idx)}, {rid}, '{sec_name}', {cat_order}, now(), now())"
+                    )
+                    cat_order += 1
+                    menu_rows.extend(cat_items)
+                    cat_idx += 1
 
         writer.append_restaurant_block(
             rid=rid,
-            addr_id=addr_id,
+            addr_id=address_id(rid),
             sched_rows=sched_rows,
+            override_rows=override_rows,
+            menu_cat_rows=menu_cat_rows,
             menu_rows=menu_rows,
             name=safe_str(place.name),
             full_addr=safe_str(place.formatted_address or ""),
+            phone_number=safe_str(place.national_phone_number or ""),
             lng=place.lng,
             lat=place.lat,
         )
 
         rid += 1
-        addr_id += 1
         appended += 1
         print(f"[{idx}/{total}] appended place={place.name}")
 
