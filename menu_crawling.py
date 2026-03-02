@@ -47,6 +47,8 @@ def _auto_scroll_to_load(driver, step: int = 600, delay: float = 0.35, max_loops
     try:
         scrollable = driver.execute_script(
             """
+            const noMargin = document.querySelector("div.place_section.no_margin");
+            if (noMargin) return noMargin;
             const first = document.querySelector(
               "div[class*='OrderHome__order_list_wrap'][class*='order_list_category']"
             );
@@ -100,6 +102,11 @@ def _extract_menu_structured(driver):
     try:
         data = driver.execute_script(
             """
+            const isOrderHome = document.querySelector(
+              "div[class*='OrderHome__order_list_wrap'][class*='order_list_category']"
+            );
+            if (!isOrderHome) return null;
+
             const sections = Array.from(
               document.querySelectorAll(
                 "div[class*='OrderHome__order_list_wrap'][class*='order_list_category']"
@@ -138,15 +145,18 @@ def _extract_menu_structured(driver):
         try:
             data = driver.execute_script(
                 """
+                const isNoMargin = document.querySelector("div.place_section.no_margin");
+                if (!isNoMargin) return null;
                 const items = Array.from(
                   document.querySelectorAll(
-                    "div.place_section.no_margin ul li"
+                    "div.place_section.no_margin ul li.E2jtL"
                   )
                 ).map(li => ({
                   name: li.querySelector("span[class*='PzHi']")?.textContent?.trim() || "",
                   description: li.querySelector("div.okI98")?.textContent?.trim() || "",
-                  price: li.querySelector("div[class*='GXS1X'] em")?.textContent?.trim() || "",
-                  badge: li.querySelector("span[class*='QM_zp']")?.textContent?.trim() || ""
+                  price: li.querySelector("div.GXS1X em")?.textContent?.trim() || "",
+                  badge: li.querySelector("span[class*='QM_zp']")?.textContent?.trim() || "",
+                  image_url: li.querySelector("img")?.getAttribute("src") || ""
                 })).filter(m => m.name);
                 return items.length ? items : null;
                 """
@@ -173,7 +183,7 @@ def _extract_menu_structured(driver):
                 "price_value": _parse_price_value(price),
                 "order_count": None,
                 "category": badge,
-                "image_url": None,
+                "image_url": item.get("image_url") or None,
             }
             sections_map.setdefault(badge, []).append(normalized)
         sections = [{"name": k, "items": v} for k, v in sections_map.items() if v]
@@ -653,7 +663,7 @@ if __name__ == "__main__":
                 pass
             continue
         except Exception as e:
-            print(f"  - 예외로 스킵: {type(e).__name__}")
+            print(f"  - 예외로 스킵: {type(e).__name__}: {e}")
             continue
         if result == -1:
             print("  - 메뉴를 찾지 못함")

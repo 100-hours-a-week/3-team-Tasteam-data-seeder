@@ -513,9 +513,11 @@ def build_dml_from_local(
                     m_desc = safe_str(raw_desc)
                     price_val = item.get("price_value")
                     price = price_val if isinstance(price_val, int) else "NULL"
+                    image_url = safe_str(item.get("image_url") or "")
+                    img_val = "NULL" if not image_url else f"'{image_url}'"
                     cat_items.append(
                         f"({menu_id(rid, menu_idx)}, {menu_category_id(rid, cat_idx)}, '{m_name}', "
-                        f"'{m_desc}', {price}, NULL, false, {j}, now(), now())"
+                        f"'{m_desc}', {price}, {img_val}, false, {j}, now(), now())"
                     )
                     menu_idx += 1
                 if cat_items:
@@ -805,9 +807,11 @@ def build_dml_from_api(
                     m_desc = safe_str(raw_desc)
                     price_val = item.get("price_value")
                     price = price_val if isinstance(price_val, int) else "NULL"
+                    image_url = safe_str(item.get("image_url") or "")
+                    img_val = "NULL" if not image_url else f"'{image_url}'"
                     cat_items.append(
                         f"({menu_id(rid, menu_idx)}, {menu_category_id(rid, cat_idx)}, '{m_name}', "
-                        f"'{m_desc}', {price}, NULL, false, {j}, now(), now())"
+                        f"'{m_desc}', {price}, {img_val}, false, {j}, now(), now())"
                     )
                     menu_idx += 1
                 if cat_items:
