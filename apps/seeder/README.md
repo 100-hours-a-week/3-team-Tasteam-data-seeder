@@ -4,9 +4,6 @@
 
 ## Scripts
 - `pipeline.py`: 좌표 기반 수집 + DML 생성
-- `menu_crawling.py`: 메뉴 크롤링
-- `build_dml_from_existing.py`: 기존 데이터 기반 DML 생성
-- `res_basic.py`: 보조 스크립트
 
 ## Example
 ```bash

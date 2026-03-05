@@ -17,9 +17,6 @@
 apps/
   seeder/
     pipeline.py
-    menu_crawling.py
-    build_dml_from_existing.py
-    res_basic.py
     README.md
   synthetic/
     generate_users.py
