@@ -556,6 +556,9 @@ def save_menu_json(data: dict, filepath: str = None) -> str:
         store = data.get("store_name", "") or ""
         base = _safe_filename(store)
         filepath = f"{base}_menu.json"
+    out_dir = os.path.dirname(filepath)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return filepath
@@ -586,6 +589,9 @@ def build_menu_targets_from_places(places_path: str, targets_path: str = None) -
             }
         )
     if targets_path:
+        targets_dir = os.path.dirname(targets_path)
+        if targets_dir:
+            os.makedirs(targets_dir, exist_ok=True)
         with open(targets_path, "w", encoding="utf-8") as f:
             json.dump(targets, f, ensure_ascii=False, indent=2)
     return targets
@@ -604,12 +610,12 @@ if __name__ == "__main__":
     import os
 
     parser = argparse.ArgumentParser(description="네이버 지도 메뉴 크롤러")
-    parser.add_argument("--places", default="ktb_res.json", help="Google Places 결과 JSON")
-    parser.add_argument("--targets", default="menu_targets.json", help="메뉴 크롤링 대상 JSON")
+    parser.add_argument("--places", default="output/seeder/ktb_res.json", help="Google Places 결과 JSON")
+    parser.add_argument("--targets", default="output/seeder/menu_targets.json", help="메뉴 크롤링 대상 JSON")
     parser.add_argument("--refresh-targets", action="store_true", help="places에서 targets 재생성")
     parser.add_argument("--start", type=int, default=0, help="시작 인덱스")
     parser.add_argument("--limit", type=int, default=0, help="최대 처리 개수(0이면 전체)")
-    parser.add_argument("--out-dir", default="menus", help="메뉴 JSON 저장 폴더")
+    parser.add_argument("--out-dir", default="output/seeder/menus", help="메뉴 JSON 저장 폴더")
     parser.add_argument("--dry-run", action="store_true", help="검색어만 출력")
     args = parser.parse_args()
 
@@ -638,18 +644,32 @@ if __name__ == "__main__":
         expected_name = _safe_filename(t.get("name") or query or "menu")
         filename = f"{expected_name}_menu.json"
         expected_path = os.path.join(args.out_dir, filename)
-        uploaded_path = os.path.join("uploaded", filename)
-        cache_path = os.path.join("cache", "menus", filename)
-        if os.path.exists(expected_path) or os.path.exists(uploaded_path) or os.path.exists(cache_path):
+        uploaded_path = os.path.join("output", "seeder", "uploaded", filename)
+        legacy_uploaded_path = os.path.join("uploaded", filename)
+        cache_path = os.path.join("output", "seeder", "cache", "menus", filename)
+        legacy_cache_path = os.path.join("cache", "menus", filename)
+        if (
+            os.path.exists(expected_path)
+            or os.path.exists(uploaded_path)
+            or os.path.exists(cache_path)
+            or os.path.exists(legacy_uploaded_path)
+            or os.path.exists(legacy_cache_path)
+        ):
             if os.path.exists(cache_path):
                 hit = cache_path
                 reason = "이미 다운로드됨"
+            elif os.path.exists(legacy_cache_path):
+                hit = legacy_cache_path
+                reason = "이미 다운로드됨(legacy)"
             elif os.path.exists(expected_path):
                 hit = expected_path
                 reason = "duplicated"
-            else:
+            elif os.path.exists(uploaded_path):
                 hit = uploaded_path
                 reason = "duplicated"
+            else:
+                hit = legacy_uploaded_path
+                reason = "duplicated(legacy)"
             print(f"[{idx}/{len(targets)}] 스킵({reason}): {hit}")
             continue
         print(f"[{idx}/{len(targets)}] 검색: {query}")

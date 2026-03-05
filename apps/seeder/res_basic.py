@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description="Google Places searchNearby")
 parser.add_argument("--lat", type=float, required=True, help="센터 위도")
 parser.add_argument("--lng", type=float, required=True, help="센터 경도")
 parser.add_argument("--radius", type=float, default=500.0, help="반경(m)")
-parser.add_argument("--out", default="ktb_res.json", help="출력 JSON 파일명")
+parser.add_argument("--out", default="output/seeder/ktb_res.json", help="출력 JSON 파일명")
 parser.add_argument("--rank", default="DISTANCE", choices=["DISTANCE", "POPULARITY"], help="정렬")
 parser.add_argument("--lang", default="ko", help="언어 코드")
 parser.add_argument("--type", default="restaurant", help="includedTypes 단일 값")
@@ -59,6 +59,9 @@ except urllib.error.HTTPError as e:
     body = e.read().decode() if e.fp else ""
     raise SystemExit(f"HTTP {e.code}: {e.reason}\n{body}")
 
+out_dir = os.path.dirname(args.out)
+if out_dir:
+    os.makedirs(out_dir, exist_ok=True)
 with open(args.out, "w", encoding="utf-8") as f:
     json.dump(data, f, ensure_ascii=False, indent=2)
 

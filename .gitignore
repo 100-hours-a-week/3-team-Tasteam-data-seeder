@@ -1,7 +1,11 @@
 # outputs
-dml_output*.sql
-dml/*.sql
+output/**
+!output/**/.gitkeep
 *.sql
+*.csv
+*.jsonl
+*.zip
+*.txt
 
 # cached / scraped data
 cache/

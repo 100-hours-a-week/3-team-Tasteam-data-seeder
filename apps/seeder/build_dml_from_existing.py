@@ -157,9 +157,9 @@ def is_ui_noise_text(s: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="기존 데이터로 DML 생성")
-    parser.add_argument("--menus-dir", default="uploaded", help="메뉴 JSON 폴더")
-    parser.add_argument("--places-glob", default="ktb_res_*.json", help="places JSON glob")
-    parser.add_argument("--out", default="dml_output.sql", help="DML 출력 파일")
+    parser.add_argument("--menus-dir", default="output/seeder/menus", help="메뉴 JSON 폴더")
+    parser.add_argument("--places-glob", default="output/seeder/ktb_res*.json", help="places JSON glob")
+    parser.add_argument("--out", default="output/seeder/dml_output.sql", help="DML 출력 파일")
     parser.add_argument("--override-json", default=None, help="textSearch 결과 JSON")
     parser.add_argument("--start-id", type=int, default=9000, help="restaurant 시작 ID")
     parser.add_argument(
@@ -339,6 +339,9 @@ def main():
         if args.id_mode == "sequential":
             rid += 1
 
+    out_dir = os.path.dirname(args.out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("".join(lines))
 

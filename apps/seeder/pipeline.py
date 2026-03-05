@@ -370,6 +370,9 @@ class DMLWriter:
     def write(self, dry_run: bool = False) -> None:
         if dry_run:
             return
+        out_dir = os.path.dirname(self.out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
         with open(self.out_path, "w", encoding="utf-8") as f:
             f.write("".join(self.lines))
 
@@ -377,6 +380,9 @@ class DMLWriter:
 def write_report(report_path: Optional[str], report: dict, dry_run: bool) -> None:
     if not report_path or dry_run:
         return
+    report_dir = os.path.dirname(report_path)
+    if report_dir:
+        os.makedirs(report_dir, exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
@@ -859,10 +865,10 @@ def main() -> None:
     parser.add_argument("--mode", default="api", choices=["local", "api"], help="data source mode (api requires GCP_API_KEY/API_KEY)")
     parser.add_argument("--lat", type=float, required=True, help="center latitude")
     parser.add_argument("--lng", type=float, required=True, help="center longitude")
-    parser.add_argument("--menus-dir", default="uploaded", help="menu JSON directory")
-    parser.add_argument("--places-glob", default="ktb_res_*.json", help="places JSON glob")
+    parser.add_argument("--menus-dir", default="output/seeder/menus", help="menu JSON directory")
+    parser.add_argument("--places-glob", default="output/seeder/ktb_res*.json", help="places JSON glob")
     parser.add_argument("--override-json", default=None, help="override JSON (optional)")
-    parser.add_argument("--out", default="dml_output.sql", help="DML output file")
+    parser.add_argument("--out", default="output/seeder/dml_output.sql", help="DML output file")
     parser.add_argument("--start-id", type=int, default=9000, help="restaurant starting ID")
     parser.add_argument(
         "--id-mode",
@@ -870,7 +876,7 @@ def main() -> None:
         default="hash",
         help="restaurant ID 생성 방식 (hash 권장)",
     )
-    parser.add_argument("--cache-dir", default="cache", help="cache directory")
+    parser.add_argument("--cache-dir", default="output/seeder/cache", help="cache directory")
     parser.add_argument("--radius", type=float, default=500.0, help="radius (m)")
     parser.add_argument("--rank", default="DISTANCE", choices=["DISTANCE", "POPULARITY"], help="rank")
     parser.add_argument("--lang", default="ko", help="language")
@@ -890,7 +896,11 @@ def main() -> None:
         help="disable Naver Map crawling",
     )
     parser.add_argument("--sleep", type=float, default=0.2, help="sleep between requests")
-    parser.add_argument("--report", default=None, help="write report JSON to this path")
+    parser.add_argument(
+        "--report",
+        default="output/seeder/report.json",
+        help="write report JSON to this path",
+    )
     parser.add_argument("--dry-run", action="store_true", help="no file write")
     args = parser.parse_args()
 
