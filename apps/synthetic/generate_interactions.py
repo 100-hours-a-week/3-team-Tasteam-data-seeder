@@ -124,12 +124,13 @@ def load_users(path: Path) -> List[User]:
     with path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            member_id = int(row["member_id"]) if row.get("member_id", "").strip() else None
             anonymous_id = row.get("anonymous_id", "").strip() or None
+            if not anonymous_id:
+                continue
             users.append(
                 User(
                     user_key=row["user_key"],
-                    member_id=member_id,
+                    member_id=None,
                     anonymous_id=anonymous_id,
                     persona=row["persona"],
                     activity_tier=row["activity_tier"],
@@ -489,6 +490,15 @@ def write_interactions(rows: List[Dict[str, str]], out_path: Path) -> None:
         writer.writerows(rows)
 
 
+def cap_rows(rows: List[Dict[str, str]], max_events: Optional[int], seed: int) -> List[Dict[str, str]]:
+    if max_events is None or max_events <= 0 or len(rows) <= max_events:
+        return rows
+    rng = random.Random(seed)
+    sampled = rng.sample(rows, k=max_events)
+    sampled.sort(key=lambda r: r["occurred_at"])
+    return sampled
+
+
 def summarize(rows: List[Dict[str, str]]) -> None:
     signal_counter = Counter(r["signal_type"] for r in rows)
     print("signal distribution:", dict(signal_counter))
@@ -504,6 +514,7 @@ def main() -> None:
     parser.add_argument("--start", default="2026-02-01T00:00:00+00:00")
     parser.add_argument("--end", default="2026-03-01T23:59:59+00:00")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-events", type=int, default=None)
     parser.add_argument("--output", default="output/synthetic/synthetic_interactions.csv")
 
     args = parser.parse_args()
@@ -540,6 +551,7 @@ def main() -> None:
         end_dt=parse_ts(args.end),
         seed=args.seed,
     )
+    rows = cap_rows(rows, args.max_events, args.seed)
 
     out = Path(args.output)
     write_interactions(rows, out)

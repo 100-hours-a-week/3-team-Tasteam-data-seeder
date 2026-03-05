@@ -16,6 +16,8 @@ python3 apps/synthetic/generate_interactions.py \
 python3 apps/synthetic/implicit_feedback.py \
   --input output/synthetic/synthetic_interactions.csv \
   --input-type synthetic \
+  --real-feedback-input implicit_feedback.csv \
+  --target-total-with-real 10000 \
   --output output/synthetic/implicit_feedback_from_synthetic.csv
 ```
 

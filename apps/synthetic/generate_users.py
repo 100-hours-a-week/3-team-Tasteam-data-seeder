@@ -127,15 +127,13 @@ def normalize_weights(weights: Dict[str, float]) -> Dict[str, float]:
 
 def build_users(num_users: int, anonymous_ratio: float, seed: int) -> List[UserRow]:
     rng = random.Random(seed)
+    _ = anonymous_ratio
     persona_weights = normalize_weights(PERSONA_WEIGHTS)
     tier_weights = normalize_weights(ACTIVITY_TIER_WEIGHTS)
 
-    anon_count = round(num_users * anonymous_ratio)
-    member_count = num_users - anon_count
-
     rows: List[UserRow] = []
 
-    for idx in range(1, member_count + 1):
+    for idx in range(1, num_users + 1):
         persona = weighted_choice(rng, persona_weights)
         tier = weighted_choice(rng, tier_weights)
         persona_group = "category_focus" if persona in CATEGORY_PERSONAS else "lifestyle"
@@ -143,28 +141,9 @@ def build_users(num_users: int, anonymous_ratio: float, seed: int) -> List[UserR
 
         rows.append(
             UserRow(
-                user_key=f"m_{idx:04d}",
-                member_id=str(idx),
-                anonymous_id="",
-                is_anonymous=0,
-                persona=persona,
-                persona_group=persona_group,
-                activity_tier=tier,
-                preferred_categories=preferred,
-            )
-        )
-
-    for idx in range(1, anon_count + 1):
-        persona = weighted_choice(rng, persona_weights)
-        tier = weighted_choice(rng, tier_weights)
-        persona_group = "category_focus" if persona in CATEGORY_PERSONAS else "lifestyle"
-        preferred = json.dumps(PREFERRED_CATEGORIES[persona], ensure_ascii=False)
-
-        rows.append(
-            UserRow(
-                user_key=f"a_{idx:04d}",
+                user_key=f"s_{idx:04d}",
                 member_id="",
-                anonymous_id=str(uuid.uuid4()),
+                anonymous_id=f"syn_{uuid.uuid4()}",
                 is_anonymous=1,
                 persona=persona,
                 persona_group=persona_group,
@@ -206,7 +185,12 @@ def summarize(rows: List[UserRow]) -> Tuple[Counter, Counter, Counter]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic users")
     parser.add_argument("--num-users", type=int, default=2000)
-    parser.add_argument("--anonymous-ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--anonymous-ratio",
+        type=float,
+        default=1.0,
+        help="Deprecated. Synthetic users are always anonymous.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", default="output/synthetic/synthetic_users.csv")
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -267,8 +268,10 @@ def build_rows_from_synthetic_csv(
             else:
                 weight = signal_weights[signal_type]
 
-            user_id = parse_int_or_none(r.get("member_id") or r.get("user_id") or "")
+            user_id = None
             anonymous_id = normalize_text(r.get("anonymous_id") or "")
+            if not anonymous_id:
+                continue
             context = parse_context(r.get("context") or "")
             created_at = (r.get("created_at") or "").strip() or datetime.now(timezone.utc).isoformat()
 
@@ -286,6 +289,34 @@ def build_rows_from_synthetic_csv(
             )
 
     return rows
+
+
+def count_feedback_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return sum(1 for _ in reader)
+
+
+def cap_synthetic_rows(
+    rows: list[ImplicitFeedbackRow],
+    real_feedback_path: Optional[Path],
+    target_total_with_real: Optional[int],
+    seed: int,
+) -> list[ImplicitFeedbackRow]:
+    if target_total_with_real is None:
+        return rows
+
+    real_count = count_feedback_rows(real_feedback_path) if real_feedback_path else 0
+    max_synthetic = max(target_total_with_real - real_count, 0)
+    if len(rows) <= max_synthetic:
+        return rows
+
+    rng = random.Random(seed)
+    sampled = rng.sample(rows, k=max_synthetic)
+    sampled.sort(key=lambda r: r.occurred_at)
+    return sampled
 
 
 def detect_input_type(input_path: Path) -> str:
@@ -313,6 +344,18 @@ def main() -> None:
         action="store_true",
         help="Exclude ui.review.write_started from REVIEW signals (result input only)",
     )
+    parser.add_argument(
+        "--real-feedback-input",
+        default=None,
+        help="CSV path for real implicit feedback. Used for synthetic downsampling.",
+    )
+    parser.add_argument(
+        "--target-total-with-real",
+        type=int,
+        default=None,
+        help="If set, synthetic rows are downsampled so real + synthetic ~= this value.",
+    )
+    parser.add_argument("--sample-seed", type=int, default=42)
 
     args = parser.parse_args()
 
@@ -330,6 +373,8 @@ def main() -> None:
         )
     else:
         rows = build_rows_from_synthetic_csv(in_path, signal_weights)
+        real_path = Path(args.real_feedback_input) if args.real_feedback_input else None
+        rows = cap_synthetic_rows(rows, real_path, args.target_total_with_real, args.sample_seed)
 
     out_path = Path(args.output)
     write_csv(rows, out_path)
